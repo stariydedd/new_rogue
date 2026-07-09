@@ -73,7 +73,9 @@ def test_backpack_type_limit():
 
 def test_killing_opponent_grants_treasure():
     person = Person(strength=10**6, agility=10**6)  # гарантированное попадание и ваншот
-    opponent = Opponent(opponent_type=OpponentType.ZOMBIE, health=1, agility=0, strength=0)
+    # strength=100 гарантирует лут > 0: формула 0.5*strength + randint(0,19),
+    # с нулевыми статами randint может выпасть в 0 и тест станет флаки.
+    opponent = Opponent(opponent_type=OpponentType.ZOMBIE, health=1, agility=0, strength=100)
     damage = player_attacks_opponent(person, opponent)
     assert damage > 0
     assert not opponent.is_alive()
