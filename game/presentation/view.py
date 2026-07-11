@@ -1,7 +1,7 @@
 import asyncio
 
 import pygame
-from datalayer.dataSource import delete_save, load_game, load_leaderboard, save_game, save_run
+from datalayer.dataSource import load_leaderboard, save_run
 from datalayer.leaderboard_client import fetch_leaderboard, run_payload, submit_run
 from domain.businessLogic import (
     check_exit,
@@ -17,8 +17,8 @@ from domain.domain import ItemType, Session
 
 MAX_NAME_LENGTH = 16
 
-MAIN_MENU_OPTIONS = [("New Game", "new"), ("Load Game", "load"), ("Scoreboard", "scoreboard"), ("Quit", "quit")]
-QUIT_OPTIONS = [("Save & Quit", "save"), ("Quit without saving", "quit"), ("Cancel", "cancel")]
+MAIN_MENU_OPTIONS = [("New Game", "new"), ("Scoreboard", "scoreboard")]
+QUIT_OPTIONS = [("Return to Menu", "menu"), ("Cancel", "cancel")]
 
 _ITEM_TYPE_NAMES = {ItemType.FOOD: "food", ItemType.ELIXIR: "elixirs", ItemType.SCROLL: "scrolls"}
 _ITEM_TYPE_STAT_KEY = {ItemType.FOOD: "food_used", ItemType.ELIXIR: "elixirs_used", ItemType.SCROLL: "scrolls_read"}
@@ -52,15 +52,6 @@ class Game:
     def start_new_game(self):
         """Начинает новую игровую сессию."""
         self.session = Session()
-        self.state = "PLAYING"
-
-    def load_saved_game(self):
-        """Загружает сохранённую сессию или показывает сообщение, если сейва нет."""
-        session = load_game()
-        if session is None:
-            self.menu_message = "No save found. Press any key..."
-            return
-        self.session = session
         self.state = "PLAYING"
 
     def open_leaderboard(self):
@@ -108,7 +99,13 @@ class Game:
             self.state = "MAIN_MENU"
         elif self.state in ("DEATH", "WIN"):
             if key in (pygame.K_RETURN, pygame.K_KP_ENTER):
-                self.should_quit = True
+                self._return_to_menu()
+
+    def _return_to_menu(self):
+        """Сбрасывает игровую сессию и возвращается в главное меню."""
+        self.session = None
+        self.menu_selected = 0
+        self.state = "MAIN_MENU"
 
     def _handle_main_menu(self, key):
         if self.menu_message:
@@ -123,12 +120,8 @@ class Game:
             if choice == "new":
                 self.name_input = self.player_name
                 self.state = "NAME_ENTRY"
-            elif choice == "load":
-                self.load_saved_game()
             elif choice == "scoreboard":
                 self.open_leaderboard()
-            elif choice == "quit":
-                self.should_quit = True
 
     def _handle_name_entry(self, event):
         if event.key == pygame.K_ESCAPE:
@@ -178,8 +171,7 @@ class Game:
         if sleeping:
             session.set_message("You are asleep!")
         check_item_pickup(session)
-        if check_exit(session):
-            save_game(session)
+        check_exit(session)
         process_enemy_turns(session)
         self._check_game_over()
 
@@ -193,7 +185,6 @@ class Game:
     def _finish_run(self, end_state):
         """Завершает забег: локальный рекорд, отправка на сервер, экран конца игры."""
         save_run(self.session)
-        delete_save()
         payload = run_payload(self.session, self.player_name)
         self.submit_status = "Submitting score..."
         asyncio.ensure_future(self._submit_score(payload))
@@ -278,10 +269,7 @@ class Game:
             self.state = "PLAYING"
         elif key in (pygame.K_RETURN, pygame.K_KP_ENTER):
             choice = QUIT_OPTIONS[self.quit_selected][1]
-            if choice == "save":
-                save_game(self.session)
-                self.should_quit = True
-            elif choice == "quit":
-                self.should_quit = True
+            if choice == "menu":
+                self._return_to_menu()
             else:
                 self.state = "PLAYING"

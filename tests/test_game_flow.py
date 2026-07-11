@@ -1,5 +1,7 @@
 """Тесты конечного автомата игры: pygame headless (SDL dummy), без сети."""
 
+import asyncio
+
 import pygame
 import pytest
 from presentation.view import Game
@@ -71,3 +73,32 @@ def test_quit_dialog_escape_resumes(playing_game):
     assert playing_game.state == "QUIT_DIALOG"
     playing_game.handle_event(key(pygame.K_ESCAPE))
     assert playing_game.state == "PLAYING"
+
+
+def test_quit_dialog_confirm_returns_to_menu(playing_game):
+    playing_game.handle_event(key(pygame.K_q))
+    playing_game.handle_event(key(pygame.K_RETURN))  # "Return to Menu" (первая опция)
+    assert playing_game.state == "MAIN_MENU"
+    assert playing_game.session is None
+
+
+def test_main_menu_has_only_new_and_scoreboard():
+    from presentation.view import MAIN_MENU_OPTIONS
+    assert [opt[1] for opt in MAIN_MENU_OPTIONS] == ["new", "scoreboard"]
+
+
+def test_death_screen_returns_to_menu(playing_game):
+    # _finish_run планирует отправку счёта через asyncio; в игре цикл всегда
+    # запущен под asyncio.run, поэтому подкладываем event loop и здесь.
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        playing_game.session.get_player().health = 0
+        playing_game._check_game_over()
+        assert playing_game.state == "DEATH"
+        playing_game.handle_event(key(pygame.K_RETURN))
+        assert playing_game.state == "MAIN_MENU"
+        assert playing_game.session is None
+    finally:
+        loop.close()
+        asyncio.set_event_loop(None)

@@ -212,7 +212,7 @@ def draw_status_panel(screen, fonts, sprites, session):
     if session.message:
         msg_surf = fonts.ui.render(session.message, True, MSG_COLOR)
         screen.blit(msg_surf, msg_surf.get_rect(topright=(SCREEN_W - 12, GRID_H + 10)))
-    binds = "[WASD] Move  [H] Weapon  [J] Salve  [K] Bottle  [E] Tome  [Q] Quit"
+    binds = "[WASD] Move  [H] Weapon  [J] Salve  [K] Bottle  [E] Tome  [Q] Menu"
     binds_surf = fonts.small.render(binds, True, HINT_COLOR)
     screen.blit(binds_surf, binds_surf.get_rect(bottomright=(SCREEN_W - 12, SCREEN_H - 8)))
 
@@ -255,8 +255,8 @@ def _draw_dialog_box(screen, fonts, title, options, selected):
 
 
 def draw_quit_dialog(screen, fonts, options, selected):
-    """Диалог подтверждения выхода из игры."""
-    _draw_dialog_box(screen, fonts, "Quit game?", options, selected)
+    """Диалог подтверждения возврата в главное меню (текущий забег будет потерян)."""
+    _draw_dialog_box(screen, fonts, "Return to menu? Run will be lost.", options, selected)
 
 
 def _menu_backdrop(screen, sprites):
