@@ -24,10 +24,11 @@ ROLE_DEFAULTS = {
     "wall": "wall_mid",
     "ladder": "floor_ladder",
     "floor": "floor_1",
+    "path": "floor_1",  # пол коридоров; без кастомного PNG совпадает с полом
 }
 
 # Роли-тайлы масштабируются ровно в клетку (TILE_SIZE), чтобы не было щелей в сетке.
-TILE_ROLES = {"floor", "wall", "ladder"}
+TILE_ROLES = {"floor", "wall", "ladder", "path"}
 
 
 def parse_custom_name(stem):

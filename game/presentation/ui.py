@@ -6,6 +6,7 @@ from domain.consts import (
     ROWS,
     SYM_CORRIDOR,
     SYM_DOOR,
+    SYM_EMPTY,
     SYM_EXIT,
     SYM_ITEM,
     SYM_PLAYER,
@@ -104,9 +105,39 @@ def _visible_cell_range(cam_x, cam_y):
     return x0, y0, x1, y1
 
 
+def _cell_hash(x, y):
+    """Детерминированный, но хорошо перемешанный хеш клетки.
+
+    Линейная формула вида x*7+y*13 даёт строго периодичные узоры вдоль рядов
+    (деревья «через каждые N клеток»); битовое перемешивание убирает
+    периодичность, сохраняя стабильность между кадрами."""
+    h = x * 374761393 + y * 668265263
+    h = (h ^ (h >> 13)) * 1274126177
+    return (h ^ (h >> 16)) & 0x7FFFFFFF
+
+
 def _floor_variant(x, y):
     """Детерминированная вариация пола: floor_1..floor_8 по координатам клетки."""
-    return f"floor_{(x * 7 + y * 13) % 8 + 1}"
+    return f"floor_{_cell_hash(x, y) % 8 + 1}"
+
+
+def _path_cells(passages, rooms):
+    """Клетки троп: коридоры (и двери) за вычетом пола комнат.
+
+    Сетка символов затирает клетку игрока/предмета маркером, поэтому тип
+    земли под ними по ней не определить — считаем тропы из данных уровня."""
+    cells = set()
+    for px, py, pw, ph in passages:
+        for yy in range(py + 1, py + ph - 1):
+            for xx in range(px + 1, px + pw - 1):
+                cells.add((xx, yy))
+    for room in rooms:
+        if room is None:
+            continue
+        for yy in range(room.crd.y, room.crd.y + room.height):
+            for xx in range(room.crd.x, room.crd.x + room.width):
+                cells.discard((xx, yy))
+    return cells
 
 
 def _blit_tile(screen, sprites, role, x, y, cam_x, cam_y, tick=0):
@@ -137,31 +168,57 @@ def draw_map(screen, fonts, sprites, session):
     cam_x, cam_y = _camera_offset(player)
     x0, y0, x1, y1 = _visible_cell_range(cam_x, cam_y)
     tick = _anim_tick()
+    path_cells = _path_cells(passages, rooms) if sprites.has_custom("path") else ()
 
     screen.fill(BLACK, (0, 0, GRID_W, GRID_H))
 
     dim = pygame.Surface((TILE_SIZE, TILE_SIZE), pygame.SRCALPHA)
     dim.fill((0, 0, 0, EXPLORED_DIM_ALPHA))
 
+    trees = []  # (x, y, hash) — деревья рисуются после тайлов, чтобы кроны не резались
+
     for y in range(y0, y1):
         for x in range(x0, x1):
             cell = base_grid[y][x]
             visible = (x, y) in fully_visible
             explored = (x, y) in wall_only
-            if not visible and not explored:
+            # Для тайлов карты кадры кастомного PNG — пространственные варианты:
+            # выбираются детерминированным хешем клетки, а не временем.
+            cell_hash = _cell_hash(x, y)
+            if cell == SYM_EMPTY or (not visible and not explored):
+                # Пустота и неисследованное — сплошная чаща: карта выглядит как
+                # поляны, прорубленные в лесу, а туман войны — как тёмный лес.
+                _blit_tile(screen, sprites, "wall", x, y, cam_x, cam_y, cell_hash)
+                if not visible:
+                    screen.blit(dim, (x * TILE_SIZE - cam_x, y * TILE_SIZE - cam_y))
+                elif sprites.has_custom("tree") and cell_hash % 5 == 0:
+                    trees.append((x, y, cell_hash))
                 continue
             if cell in FLOOR_SYMBOLS:
-                # Свой пол (роль "floor") кроет всю карту; иначе — вариации атласа.
-                floor_role = "floor" if sprites.has_custom("floor") else _floor_variant(x, y)
-                _blit_tile(screen, sprites, floor_role, x, y, cam_x, cam_y)
+                # Тропы определяются по данным уровня (не по символу клетки —
+                # его затирают маркеры игрока/предметов); остальной пол — "floor".
+                if (x, y) in path_cells:
+                    base_role = "path"
+                elif sprites.has_custom("floor"):
+                    base_role = "floor"
+                else:
+                    base_role = _floor_variant(x, y)
+                _blit_tile(screen, sprites, base_role, x, y, cam_x, cam_y, cell_hash)
                 if cell == SYM_EXIT:
                     _blit_tile(screen, sprites, "ladder", x, y, cam_x, cam_y)
+                elif (cell == SYM_ROOM_FLOOR and visible
+                        and sprites.has_custom("decor") and cell_hash % 11 == 0):
+                    # Редкие кустики оживляют поляны.
+                    _blit_tile(screen, sprites, "decor", x, y, cam_x, cam_y, cell_hash // 11)
             elif cell == SYM_WALL:
-                _blit_tile(screen, sprites, "wall", x, y, cam_x, cam_y)
-            else:
-                continue
+                _blit_tile(screen, sprites, "wall", x, y, cam_x, cam_y, cell_hash)
+                if visible and sprites.has_custom("tree") and cell_hash % 4 == 0:
+                    trees.append((x, y, cell_hash))
             if not visible:
                 screen.blit(dim, (x * TILE_SIZE - cam_x, y * TILE_SIZE - cam_y))
+
+    for x, y, cell_hash in trees:
+        _blit_entity(screen, sprites, "tree", x, y, cam_x, cam_y, cell_hash)
 
     for room in rooms:
         if room is None:
@@ -265,16 +322,8 @@ def draw_quit_dialog(screen, fonts, options, selected):
 
 
 def _menu_backdrop(screen, sprites):
-    """Фон меню: пол подземелья на весь экран, затемнённый."""
-    cols = SCREEN_W // TILE_SIZE + 1
-    rows = SCREEN_H // TILE_SIZE + 1
-    for y in range(rows):
-        for x in range(cols):
-            floor_role = "floor" if sprites.has_custom("floor") else _floor_variant(x, y)
-            screen.blit(sprites.sprite(floor_role), (x * TILE_SIZE, y * TILE_SIZE))
-    overlay = pygame.Surface((SCREEN_W, SCREEN_H), pygame.SRCALPHA)
-    overlay.fill((0, 0, 0, 190))
-    screen.blit(overlay, (0, 0))
+    """Фон экранов меню — сплошной чёрный."""
+    screen.fill(BLACK)
 
 
 def _title_with_shadow(screen, fonts, text, y):

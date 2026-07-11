@@ -7,3 +7,11 @@ fonts/PressStart2P.ttf
 Press Start 2P by CodeMan38
 https://fonts.google.com/specimen/Press+Start+2P
 License: SIL Open Font License 1.1
+
+custom/floor.3.png, custom/path.3.png — tiles from "[LPC] Terrains"
+https://opengameart.org/content/lpc-terrains
+License: CC-BY-SA 3.0 / GPL 3.0. Authors: see CREDITS-lpc-terrain.txt
+
+custom/wall.2.png — bushes from "[LPC] Trees Mega-Pack"
+https://opengameart.org/content/lpc-trees
+License: CC-BY-SA 3.0. Authors: see CREDITS-lpc-trees.txt
