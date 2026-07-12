@@ -349,15 +349,10 @@ def draw_main_menu(screen, fonts, sprites, options, selected, message=""):
     screen.blit(hero, hero.get_rect(centerx=SCREEN_W // 2, y=210))
 
     menu_y = 360
-    marker = pygame.transform.scale_by(sprites.sprite("sword"), 1)
-    marker = pygame.transform.rotate(marker, -90)
     for i, (label, _) in enumerate(options):
         color = HILITE if i == selected else WHITE
         surf = fonts.menu.render(label, True, color)
-        rect = surf.get_rect(centerx=SCREEN_W // 2, y=menu_y + i * 52)
-        screen.blit(surf, rect)
-        if i == selected:
-            screen.blit(marker, marker.get_rect(midright=(rect.left - 18, rect.centery)))
+        screen.blit(surf, surf.get_rect(centerx=SCREEN_W // 2, y=menu_y + i * 52))
 
     if message:
         _center_text(screen, fonts.ui, message, SCREEN_H - 60, MSG_COLOR)

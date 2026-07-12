@@ -188,11 +188,14 @@ function show_infobox() {
 
 
     <link rel="icon" type="image/png" href="favicon.png" sizes="16x16">
+    <link rel="preload" href="PressStart2P.ttf" as="font" type="font/ttf" crossorigin>
 
     <style>
         @font-face {
             font-family: 'PressStart2P';
             src: url('PressStart2P.ttf') format('truetype');
+            /* Пока шрифт не загружен, текст скрыт — без вспышки системным шрифтом. */
+            font-display: block;
         }
 
         #status {
