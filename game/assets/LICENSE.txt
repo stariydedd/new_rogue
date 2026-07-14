@@ -1,20 +1,23 @@
-tileset.png / tileset_coords.txt
-16x16 DungeonTileset II by 0x72
-https://0x72.itch.io/dungeontileset-ii
-License: CC0 (public domain)
-
 fonts/PressStart2P.ttf
 Press Start 2P by CodeMan38
 https://fonts.google.com/specimen/Press+Start+2P
 License: SIL Open Font License 1.1
 
-custom/floor.3.png, custom/path.3.png — tiles from "[LPC] Terrains"
+custom/floor.6.png, custom/path.6.png — tiles from "[LPC] Terrains"
 https://opengameart.org/content/lpc-terrains
 License: CC-BY-SA 3.0 / GPL 3.0. Authors: see CREDITS-lpc-terrain.txt
+
+custom/wall.8.png, custom/tree.2.png, custom/decor.4.png — from "[LPC] Trees Mega-Pack"
+https://opengameart.org/content/lpc-trees
+License: CC-BY-SA 3.0. Authors: see CREDITS-lpc-trees.txt
+
+custom/player.8.png, pudge.8.png, bloodseeker.21.png, riki.39.png,
+axe.48.png, skywrath.5.png — pixel Showcase Decorations from Dota 2 (© Valve),
+via Liquipedia. Non-commercial fan content.
 
 web/favicon.png — Juggernaut minimap icon from Dota 2 (© Valve),
 via Dota 2 Wiki (dota2.fandom.com). Non-commercial fan content.
 
-custom/wall.2.png — bushes from "[LPC] Trees Mega-Pack"
-https://opengameart.org/content/lpc-trees
-License: CC-BY-SA 3.0. Authors: see CREDITS-lpc-trees.txt
+custom/food.png, elixir.png, scroll.png, sword.png, portal.png, heart.png,
+ui_run.png (silhouette from a stock icon) — original pixel art made for this
+project; item designs are fan interpretations of Dota 2 items (© Valve).

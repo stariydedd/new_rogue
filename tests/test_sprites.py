@@ -25,12 +25,17 @@ def test_parse_custom_name_animated():
     assert parse_custom_name("wall.2") == ("wall", 2)
 
 
-def test_roles_resolve_without_crashing():
+def test_all_game_roles_have_sprites():
+    # Атласа больше нет: каждый PNG в assets/custom/ обязан существовать
+    # для всех ролей, которые рисует ui.py и touch.py.
+    from presentation.ui import ITEM_SPRITES, OPPONENT_SPRITES
+
     store = SpriteStore(SPRITE_SCALE)
-    # Каждая роль отдаёт спрайт (кастомный из assets/custom/ или дефолт из атласа).
-    for role in ("player", "pudge", "bloodseeker", "riki", "axe", "skywrath", "food", "sword", "wall", "ladder"):
+    roles = {"player", "wall", "floor", "path", "portal", "heart", "tree", "decor"}
+    roles |= set(OPPONENT_SPRITES.values()) | set(ITEM_SPRITES.values())
+    for role in sorted(roles):
+        assert store.has_custom(role), f"нет assets/custom/{role}.png"
         assert store.sprite(role) is not None
-    # Несуществующая роль-переопределение отсутствует.
     assert not store.has_custom("definitely_not_a_role")
 
 

@@ -249,7 +249,7 @@ class Game:
                 break
             level_exit = session.get_exit()
             if level_exit.x == nx and level_exit.y == ny:
-                session.set_message("You stop at the ladder.")
+                session.set_message("You stop at the portal.")
                 break
             if not can_move_to(nx, ny, session):
                 turn = self._corridor_turn(dx, dy)

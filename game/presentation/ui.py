@@ -38,8 +38,7 @@ from presentation.config import (
 # отдельными символами, но визуально это те же клетки пола.
 FLOOR_SYMBOLS = (SYM_ROOM_FLOOR, SYM_CORRIDOR, SYM_DOOR, SYM_EXIT, SYM_ITEM, SYM_PLAYER)
 
-# Значения — семантические роли (см. ROLE_DEFAULTS в sprites.py): игрок может
-# переопределить любую своим PNG в assets/custom/<role>.png.
+# Значения — семантические роли: каждой соответствует PNG в assets/custom/.
 OPPONENT_SPRITES = {
     OpponentType.ZOMBIE: "pudge",
     OpponentType.VAMPIRE: "bloodseeker",
@@ -48,12 +47,13 @@ OPPONENT_SPRITES = {
     OpponentType.SNAKE: "skywrath",
 }
 
+# Сокровища не появляются на карте (золото начисляется за убийство),
+# поэтому спрайта для ItemType.TREASURE нет.
 ITEM_SPRITES = {
     ItemType.FOOD: "food",
     ItemType.ELIXIR: "elixir",
     ItemType.SCROLL: "scroll",
     ItemType.WEAPON: "sword",
-    ItemType.TREASURE: "coin",
 }
 
 PLAYER_SPRITE = "player"
@@ -114,11 +114,6 @@ def _cell_hash(x, y):
     return (h ^ (h >> 16)) & 0x7FFFFFFF
 
 
-def _floor_variant(x, y):
-    """Детерминированная вариация пола: floor_1..floor_8 по координатам клетки."""
-    return f"floor_{_cell_hash(x, y) % 8 + 1}"
-
-
 def _path_cells(passages, rooms):
     """Клетки троп: коридоры (и двери) за вычетом пола комнат.
 
@@ -166,7 +161,7 @@ def draw_map(screen, fonts, sprites, session):
     cam_x, cam_y = _camera_offset(player)
     x0, y0, x1, y1 = _visible_cell_range(cam_x, cam_y)
     tick = _anim_tick()
-    path_cells = _path_cells(passages, rooms) if sprites.has_custom("path") else ()
+    path_cells = _path_cells(passages, rooms)
 
     screen.fill(BLACK, (0, 0, cfg.GRID_W, cfg.GRID_H))
 
@@ -195,15 +190,10 @@ def draw_map(screen, fonts, sprites, session):
             if cell in FLOOR_SYMBOLS:
                 # Тропы определяются по данным уровня (не по символу клетки —
                 # его затирают маркеры игрока/предметов); остальной пол — "floor".
-                if (x, y) in path_cells:
-                    base_role = "path"
-                elif sprites.has_custom("floor"):
-                    base_role = "floor"
-                else:
-                    base_role = _floor_variant(x, y)
+                base_role = "path" if (x, y) in path_cells else "floor"
                 _blit_tile(screen, sprites, base_role, x, y, cam_x, cam_y, cell_hash)
                 if cell == SYM_EXIT:
-                    _blit_tile(screen, sprites, "ladder", x, y, cam_x, cam_y)
+                    _blit_tile(screen, sprites, "portal", x, y, cam_x, cam_y)
                 elif (cell == SYM_ROOM_FLOOR and visible
                         and sprites.has_custom("decor") and cell_hash % 11 == 0):
                     # Редкие кустики оживляют поляны.
@@ -259,7 +249,7 @@ def draw_status_panel(screen, fonts, sprites, session):
     # Ряд HP: сердечко и цифры выровнены по вертикальному центру бара.
     bar_y = cfg.GRID_H + 34
     bar_h = 16
-    heart = pygame.transform.scale(sprites.sprite("ui_heart_full"), (18, 18))
+    heart = pygame.transform.scale(sprites.sprite("heart"), (18, 18))
     screen.blit(heart, (text_x, bar_y - 1))
     bar_x = text_x + 26
     bar_w = 200
@@ -302,7 +292,7 @@ def _draw_status_panel_touch(screen, fonts, sprites, session, player):
 
     bar_y = cfg.GRID_H + 34
     bar_h = 16
-    heart = pygame.transform.scale(sprites.sprite("ui_heart_full"), (18, 18))
+    heart = pygame.transform.scale(sprites.sprite("heart"), (18, 18))
     screen.blit(heart, (text_x, bar_y - 1))
     bar_x = text_x + 26
     bar_w = 180
@@ -484,8 +474,7 @@ HELP_ITEMS = [
     ("elixir", "Elixir", "Temporary stat buff for 20 turns."),
     ("scroll", "Scroll", "Permanent stat buff."),
     ("sword", "Weapon", "Equip it; the old one drops nearby."),
-    ("coin", "Treasure", "Dropped by slain enemies; your score."),
-    ("ladder", "Exit", "Descend deeper. Clear level 21 to win."),
+    ("portal", "Exit", "Descend deeper. Clear level 21 to win."),
 ]
 
 
