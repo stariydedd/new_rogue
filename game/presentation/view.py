@@ -6,6 +6,7 @@ import pygame
 from datalayer.dataSource import load_leaderboard, save_run
 from datalayer.leaderboard_client import fetch_leaderboard, run_payload, submit_run
 from domain.businessLogic import (
+    can_move_to,
     check_exit,
     check_item_pickup,
     drop_item_near_player,
@@ -18,6 +19,7 @@ from domain.consts import MAX_LEVELS
 from domain.domain import ItemType, Session
 
 MAX_NAME_LENGTH = 16
+RUN_LIMIT = 200  # предохранитель от бесконечного бега
 
 MAIN_MENU_OPTIONS = [("New Game", "new"), ("Leaderboard", "scoreboard"), ("Help", "help")]
 QUIT_OPTIONS = [("Return to Menu", "menu"), ("Cancel", "cancel")]
@@ -48,6 +50,7 @@ class Game:
         self.player_name = ""
         self.name_input = ""
         self.submit_status = ""
+        self.pending_run = False
         self.should_quit = False
 
     # --- переходы между состояниями ---
@@ -148,12 +151,28 @@ class Game:
         elif event.unicode and event.unicode.isprintable() and len(self.name_input) < MAX_NAME_LENGTH:
             self.name_input += event.unicode
 
+    DIRECTION_KEYS = {
+        pygame.K_w: (0, -1), pygame.K_UP: (0, -1),
+        pygame.K_s: (0, 1), pygame.K_DOWN: (0, 1),
+        pygame.K_a: (-1, 0), pygame.K_LEFT: (-1, 0),
+        pygame.K_d: (1, 0), pygame.K_RIGHT: (1, 0),
+    }
+
     def _handle_playing(self, key):
         session = self.session
         person = session.get_player()
         sleeping = person.special_state.get("sleeping", False)
         session.message = ""
         acted = False
+
+        if self.pending_run:
+            # Режим «бег»: следующая клавиша-направление запускает серию ходов,
+            # любая другая — отменяет.
+            self.pending_run = False
+            direction = self.DIRECTION_KEYS.get(key)
+            if direction and not sleeping:
+                self._run_direction(*direction)
+            return
 
         if key == pygame.K_q:
             self.quit_selected = 0
@@ -162,6 +181,10 @@ class Game:
         elif key == pygame.K_F1:
             self.help_return_state = "PLAYING"
             self.state = "HELP"
+            return
+        elif key == pygame.K_f:
+            self.pending_run = True
+            session.set_message("Run: press a direction key.")
             return
         elif key in (pygame.K_w, pygame.K_UP):
             acted = sleeping or move_person_y(session, -1)
@@ -192,6 +215,36 @@ class Game:
         check_exit(session)
         process_enemy_turns(session)
         self._check_game_over()
+
+    def _run_direction(self, dx, dy):
+        """Бег (find из оригинального Rogue): серия ходов в направлении до упора.
+
+        Каждый шаг — полноценный ход (враги ходят). Остановка: стена или
+        поворот, враг на пути, лестница впереди (на бегу не спускаемся),
+        полученный урон, подобранный предмет, сон или конец игры."""
+        session = self.session
+        person = session.get_player()
+        opponents = session.get_opponents()
+        for _ in range(RUN_LIMIT):
+            if self.state != "PLAYING" or person.special_state.get("sleeping"):
+                break
+            nx, ny = person.crd.x + dx, person.crd.y + dy
+            if any(op.is_alive() and op.crd.x == nx and op.crd.y == ny for op in opponents):
+                break
+            level_exit = session.get_exit()
+            if level_exit.x == nx and level_exit.y == ny:
+                session.set_message("You stop at the ladder.")
+                break
+            if not can_move_to(nx, ny, session):
+                break
+            hp_before = person.health
+            items_before = len(person.backpack.items)
+            moved = move_person_x(session, dx) if dx else move_person_y(session, dy)
+            if not moved:
+                break
+            self._resolve_turn(False)
+            if person.health < hp_before or len(person.backpack.items) != items_before:
+                break
 
     def _check_game_over(self):
         session = self.session

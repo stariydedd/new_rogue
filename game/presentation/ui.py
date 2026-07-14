@@ -280,7 +280,7 @@ def draw_status_panel(screen, fonts, sprites, session):
     if session.message:
         msg_surf = fonts.ui.render(session.message, True, MSG_COLOR)
         screen.blit(msg_surf, msg_surf.get_rect(topright=(SCREEN_W - 12, GRID_H + 10)))
-    binds = "[WASD] Move  [H] Weapon  [J] Food  [K] Elixir  [E] Scroll  [F1] Help  [Q] Menu"
+    binds = "[WASD] Move  [F+dir] Run  [H] Weapon  [J] Food  [K] Elixir  [E] Scroll  [F1] Help  [Q] Menu"
     binds_surf = fonts.small.render(binds, True, HINT_COLOR)
     screen.blit(binds_surf, binds_surf.get_rect(bottomright=(SCREEN_W - 12, SCREEN_H - 4)))
 
@@ -449,7 +449,7 @@ def draw_help(screen, fonts, sprites):
     for i, (role, name, desc) in enumerate(HELP_ITEMS):
         _help_row(screen, fonts, sprites, role, name, desc, right_x, top_y + 36 + i * 66)
 
-    binds = "[WASD] Move   [H] Weapon   [J] Food   [K] Elixir   [E] Scroll   [F1] Help   [Q] Menu"
+    binds = "[WASD] Move  [F+dir] Run  [H] Weapon  [J] Food  [K] Elixir  [E] Scroll  [F1] Help  [Q] Menu"
     _center_text(screen, fonts.small, binds, SCREEN_H - 64, WHITE)
     _center_text(screen, fonts.small, "Press any key to return...", SCREEN_H - 32, HINT_COLOR)
 

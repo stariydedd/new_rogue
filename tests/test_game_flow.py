@@ -84,6 +84,45 @@ def test_item_menu_without_items_shows_message(playing_game):
     assert "No food" in playing_game.session.message
 
 
+def test_run_moves_until_wall(playing_game):
+    # Без врагов бег вправо должен довести до стены комнаты (или края тропы).
+    from domain.businessLogic import can_move_to
+
+    session = playing_game.session
+    for room in session.get_rooms():
+        if room is not None:
+            room.enemies.clear()
+            room.items.clear()
+    person = session.get_player()
+    # Ставим игрока к левому краю его комнаты — бег вправо детерминирован.
+    player_room = next(
+        r for r in session.get_rooms()
+        if r is not None
+        and r.crd.x <= person.crd.x < r.crd.x + r.width
+        and r.crd.y <= person.crd.y < r.crd.y + r.height
+    )
+    person.crd.x = player_room.crd.x
+    start_x = person.crd.x
+    playing_game.handle_event(key(pygame.K_f))
+    assert playing_game.pending_run
+    playing_game.handle_event(key(pygame.K_d))
+    assert not playing_game.pending_run
+    assert person.crd.x > start_x  # пробежал больше одной клетки от старта
+    # упёрся: правее либо стена, либо лестница
+    nx, ny = person.crd.x + 1, person.crd.y
+    exit_ahead = session.get_exit().x == nx and session.get_exit().y == ny
+    assert exit_ahead or not can_move_to(nx, ny, session)
+
+
+def test_run_cancelled_by_non_direction_key(playing_game):
+    person = playing_game.session.get_player()
+    start = (person.crd.x, person.crd.y)
+    playing_game.handle_event(key(pygame.K_f))
+    playing_game.handle_event(key(pygame.K_j))  # не направление — отмена
+    assert not playing_game.pending_run
+    assert (person.crd.x, person.crd.y) == start
+
+
 def test_quit_dialog_escape_resumes(playing_game):
     playing_game.handle_event(key(pygame.K_q))
     assert playing_game.state == "QUIT_DIALOG"
