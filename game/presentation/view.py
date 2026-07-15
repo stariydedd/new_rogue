@@ -6,13 +6,13 @@ import pygame
 from datalayer.dataSource import load_leaderboard, save_run
 from datalayer.leaderboard_client import fetch_leaderboard, run_payload, submit_run
 from domain.businessLogic import (
-    can_move_to,
     check_exit,
     check_item_pickup,
     drop_item_near_player,
     item_stat_label,
     move_person_x,
     move_person_y,
+    run_direction,
 )
 from domain.combat import process_enemy_turns
 from domain.consts import MAX_LEVELS
@@ -21,7 +21,6 @@ from domain.domain import ItemType, Session
 from presentation import webenv
 
 MAX_NAME_LENGTH = 16
-RUN_LIMIT = 200  # предохранитель от бесконечного бега
 
 MAIN_MENU_OPTIONS = [("New Game", "new"), ("Leaderboard", "scoreboard"), ("Help", "help")]
 QUIT_OPTIONS = [("Return to Menu", "menu"), ("Cancel", "cancel")]
@@ -180,12 +179,18 @@ class Game:
         acted = False
 
         if self.pending_run:
-            # Режим «бег»: следующая клавиша-направление запускает серию ходов,
-            # любая другая — отменяет.
+            # Режим «бег»: следующая клавиша-направление запускает серию ходов
+            # (правила — в domain.businessLogic.run_direction), любая другая —
+            # отменяет. Во сне попытка бега тратит ход, как и обычный шаг, —
+            # иначе сон не тикал бы.
             self.pending_run = False
             direction = self.DIRECTION_KEYS.get(key)
-            if direction and not sleeping:
-                self._run_direction(*direction)
+            if direction:
+                if sleeping:
+                    self._resolve_turn(True)
+                else:
+                    run_direction(self.session, *direction)
+                    self._check_game_over()
             return
 
         if key == pygame.K_q:
@@ -229,122 +234,6 @@ class Game:
         check_exit(session)
         process_enemy_turns(session)
         self._check_game_over()
-
-    def _run_direction(self, dx, dy):
-        """Бег (find из оригинального Rogue): серия ходов в направлении до упора.
-
-        Каждый шаг — полноценный ход (враги ходят). Бег по комнате
-        останавливается на клетке перед дверью впереди и у двери, мимо
-        которой пробегает (проём сбоку); но если игрок уже стоит вплотную
-        к двери, F в её сторону проносит через дверь и дальше по коридору.
-        Коридорный бег следует поворотам и заканчивается в дверном проёме
-        на том конце (дверь — конец коридора). Также стоп: стена или
-        развилка, враг, портал впереди (на бегу не спускаемся), полученный
-        урон, подобранный предмет, сон или конец игры. Если первый же шаг
-        невозможен — «Can't move that way.» без движения."""
-        session = self.session
-        person = session.get_player()
-        opponents = session.get_opponents()
-        for step in range(RUN_LIMIT):
-            if self.state != "PLAYING" or person.special_state.get("sleeping"):
-                break
-            nx, ny = person.crd.x + dx, person.crd.y + dy
-            if any(op.is_alive() and op.crd.x == nx and op.crd.y == ny for op in opponents):
-                break
-            level_exit = session.get_exit()
-            if level_exit.x == nx and level_exit.y == ny:
-                session.set_message("You stop at the portal.")
-                break
-            entering_door = self._is_door_cell(nx, ny)
-            from_room = self._is_room_cell(person.crd.x, person.crd.y)
-            if entering_door and from_room and step:
-                break  # разбежались по комнате — стоп перед дверью, не в ней
-            if not can_move_to(nx, ny, session):
-                # Поворот коридора — только когда уже бежим: нажатие в сторону
-                # стены не должно начинать бег вбок.
-                turn = self._corridor_turn(dx, dy) if step else None
-                if turn:
-                    dx, dy = turn
-                    continue
-                if step == 0:
-                    session.set_message("Can't move that way.")
-                break
-            hp_before = person.health
-            items_before = len(person.backpack.items)
-            moved = move_person_x(session, dx) if dx else move_person_y(session, dy)
-            if not moved:
-                break
-            self._resolve_turn(False)
-            if person.health < hp_before or len(person.backpack.items) != items_before:
-                break
-            if entering_door and not from_room:
-                break  # прибежали по коридору в дверной проём — конец коридора
-            # Стоп у бокового проёма — только в комнате: в коридоре дверь
-            # сбоку от поворота — это его собственное продолжение, и бег
-            # должен доехать до проёма, а не встать на углу.
-            if self._door_beside(dx, dy) and self._is_room_cell(person.crd.x, person.crd.y):
-                break  # пробегаем мимо прохода — стоп у двери
-
-    def _door_beside(self, dx, dy):
-        """Дверь сбоку от направления движения — игрок пробегает мимо проёма."""
-        person = self.session.get_player()
-        x, y = person.crd.x, person.crd.y
-        sides = ((x, y - 1), (x, y + 1)) if dx else ((x - 1, y), (x + 1, y))
-        return any(self._is_door_cell(sx, sy) for sx, sy in sides)
-
-    def _is_room_cell(self, x, y):
-        """Клетка пола комнаты (двери и коридоры не считаются)."""
-        return any(room is not None
-                   and room.crd.x <= x < room.crd.x + room.width
-                   and room.crd.y <= y < room.crd.y + room.height
-                   for room in self.session.get_rooms())
-
-    def _is_door_cell(self, x, y):
-        """Клетка двери: центральная линия коридора, лежащая на стене комнаты."""
-        session = self.session
-        if not any(px + 1 <= x < px + pw - 1 and py + 1 <= y < py + ph - 1
-                   for px, py, pw, ph in session.get_passages()):
-            return False
-        for room in session.get_rooms():
-            if room is None:
-                continue
-            rx, ry, rw, rh = room.crd.x, room.crd.y, room.width, room.height
-            if (x == rx - 1 or x == rx + rw) and ry <= y < ry + rh:
-                return True
-            if (y == ry - 1 or y == ry + rh) and rx <= x < rx + rw:
-                return True
-        return False
-
-    def _is_corridor_cell(self, x, y):
-        """Клетка тропы: внутри сегмента коридора и не на полу комнаты (двери — да)."""
-        session = self.session
-        for px, py, pw, ph in session.get_passages():
-            if px + 1 <= x < px + pw - 1 and py + 1 <= y < py + ph - 1:
-                for room in session.get_rooms():
-                    if room is not None and (
-                        room.crd.x <= x < room.crd.x + room.width
-                        and room.crd.y <= y < room.crd.y + room.height
-                    ):
-                        return False
-                return True
-        return False
-
-    def _corridor_turn(self, dx, dy):
-        """Возвращает новое направление на повороте коридора или None.
-
-        Поворот выполняется, только если игрок стоит на тропе и ровно одно
-        направление (кроме обратного) продолжает её — развилки останавливают бег."""
-        person = self.session.get_player()
-        if not self._is_corridor_cell(person.crd.x, person.crd.y):
-            return None
-        options = []
-        for ndx, ndy in ((0, -1), (0, 1), (-1, 0), (1, 0)):
-            if (ndx, ndy) == (-dx, -dy):
-                continue
-            tx, ty = person.crd.x + ndx, person.crd.y + ndy
-            if self._is_corridor_cell(tx, ty) and can_move_to(tx, ty, self.session):
-                options.append((ndx, ndy))
-        return options[0] if len(options) == 1 else None
 
     def _check_game_over(self):
         session = self.session

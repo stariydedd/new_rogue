@@ -1,8 +1,10 @@
-from domain.combat import player_attacks_opponent
+from domain import geometry
+from domain.combat import player_attacks_opponent, process_enemy_turns
 from domain.consts import *
 from domain.domain import OpponentType
 
 FOG_RADIUS = 8
+RUN_LIMIT = 200  # предохранитель от бесконечного бега
 
 
 def _bresenham_line(x0, y0, x1, y1):
@@ -181,20 +183,6 @@ def build_grid_map(rooms, passages, player, exit, opponents=None):
         if in_bounds(x, y):
             grid[y][x] = value
 
-    def is_room_wall_cell(room, x, y):
-        """Проверяет, является ли клетка внешней стеной данной комнаты."""
-        rx, ry, rw, rh = room.crd.x, room.crd.y, room.width, room.height
-        if x == rx - 1 or x == rx + rw:
-            return ry <= y < ry + rh
-        if y == ry - 1 or y == ry + rh:
-            return rx <= x < rx + rw
-        return False
-
-    def is_room_floor_cell(room, x, y):
-        """Проверяет, входит ли клетка в пол комнаты."""
-        rx, ry, rw, rh = room.crd.x, room.crd.y, room.width, room.height
-        return rx <= x < rx + rw and ry <= y < ry + rh
-
     def draw_room(room):
         """Рисует стены и пол одной комнаты."""
         x, y, w, h = room.crd.x, room.crd.y, room.width, room.height
@@ -209,38 +197,20 @@ def build_grid_map(rooms, passages, player, exit, opponents=None):
             for xx in range(x, x + w):
                 set_cell(xx, yy, SYM_ROOM_FLOOR)
 
-    def get_passage_center_cells(passage):
-        """Возвращает клетки центральной линии коридора (без расширения на ±1)."""
-        x, y, w, h = passage
-        real_x, real_y = x + 1, y + 1
-        real_w, real_h = w - 2, h - 2
-        return [(xx, yy)
-                for yy in range(real_y, real_y + real_h)
-                for xx in range(real_x, real_x + real_w)
-                if in_bounds(xx, yy)]
-
-    def is_any_room_wall_cell(x, y):
-        """Проверяет, является ли клетка стеной хотя бы одной из комнат уровня."""
-        return any(is_room_wall_cell(r, x, y) for r in rooms if r is not None)
-
-    def is_any_room_floor_cell(x, y):
-        """Проверяет, входит ли клетка в пол хотя бы одной из комнат уровня."""
-        return any(is_room_floor_cell(r, x, y) for r in rooms if r is not None)
-
     for room in rooms:
         if room is not None:
             draw_room(room)
 
     corridor_cells = set()
     for passage in passages:
-        corridor_cells.update(get_passage_center_cells(passage))
+        corridor_cells.update(geometry.passage_center_cells(passage))
 
     for x, y in corridor_cells:
-        if not is_any_room_floor_cell(x, y):
+        if not geometry.is_any_room_floor_cell(x, y, rooms):
             set_cell(x, y, SYM_CORRIDOR)
 
     for x, y in corridor_cells:
-        if is_any_room_wall_cell(x, y):
+        if geometry.is_any_room_wall_cell(x, y, rooms):
             set_cell(x, y, SYM_DOOR)
 
     for room in [r for r in rooms if r is not None]:
@@ -395,3 +365,96 @@ def check_item_pickup(session):
                     session.set_message(f"Picked up: {item.name}{item_stat_label(item)}.")
                 else:
                     session.set_message(f"Backpack full! Cannot pick up {item.name}.")
+
+
+# --- Бег (find из оригинального Rogue) ---
+
+def _corridor_turn(session, dx, dy):
+    """Возвращает новое направление на повороте коридора или None.
+
+    Поворот выполняется, только если игрок стоит на тропе и ровно одно
+    направление (кроме обратного) продолжает её — развилки останавливают бег."""
+    person = session.get_player()
+    rooms, passages = session.get_rooms(), session.get_passages()
+    if not geometry.is_corridor_cell(person.crd.x, person.crd.y, rooms, passages):
+        return None
+    options = []
+    for ndx, ndy in ((0, -1), (0, 1), (-1, 0), (1, 0)):
+        if (ndx, ndy) == (-dx, -dy):
+            continue
+        tx, ty = person.crd.x + ndx, person.crd.y + ndy
+        if geometry.is_corridor_cell(tx, ty, rooms, passages) and can_move_to(tx, ty, session):
+            options.append((ndx, ndy))
+    return options[0] if len(options) == 1 else None
+
+
+def _door_beside(session, dx, dy):
+    """Дверь сбоку от направления движения — игрок пробегает мимо проёма."""
+    person = session.get_player()
+    x, y = person.crd.x, person.crd.y
+    sides = ((x, y - 1), (x, y + 1)) if dx else ((x - 1, y), (x + 1, y))
+    return any(side in session.level.doors for side in sides)
+
+
+def run_direction(session, dx, dy):
+    """Бег: серия ходов в направлении до упора; каждый шаг — полноценный ход.
+
+    Бег по комнате останавливается на клетке перед дверью впереди и у двери,
+    мимо которой пробегает (проём сбоку); но если игрок уже стоит вплотную
+    к двери, шаг в её сторону проносит через дверь и дальше по коридору.
+    Коридорный бег следует поворотам и заканчивается в дверном проёме на том
+    конце (дверь — конец коридора). Также стоп: стена или развилка, враг,
+    портал впереди (на бегу не спускаемся), полученный урон, подобранный
+    предмет, сон или смерть. Если первый же шаг невозможен —
+    «Can't move that way.» без движения. Вызывающий код проверяет конец игры
+    после возврата."""
+    person = session.get_player()
+    opponents = session.get_opponents()
+    rooms = session.get_rooms()
+    doors = session.level.doors
+    for step in range(RUN_LIMIT):
+        if not person.is_alive() or person.special_state.get("sleeping"):
+            break
+        nx, ny = person.crd.x + dx, person.crd.y + dy
+        if any(op.is_alive() and op.crd.x == nx and op.crd.y == ny for op in opponents):
+            if step == 0:
+                # Нажатие не должно выглядеть мёртвым: бег к врагу вплотную
+                # не начинается, но игроку сообщается почему (атака — обычным шагом).
+                session.set_message("An enemy is in the way.")
+            break
+        level_exit = session.get_exit()
+        if level_exit.x == nx and level_exit.y == ny:
+            session.set_message("You stop at the portal.")
+            break
+        entering_door = (nx, ny) in doors
+        from_room = geometry.is_any_room_floor_cell(person.crd.x, person.crd.y, rooms)
+        if entering_door and from_room and step:
+            break  # разбежались по комнате — стоп перед дверью, не в ней
+        if not can_move_to(nx, ny, session):
+            # Поворот коридора — только когда уже бежим: нажатие в сторону
+            # стены не должно начинать бег вбок.
+            turn = _corridor_turn(session, dx, dy) if step else None
+            if turn:
+                dx, dy = turn
+                continue
+            if step == 0:
+                session.set_message("Can't move that way.")
+            break
+        hp_before = person.health
+        items_before = len(person.backpack.items)
+        moved = move_person_x(session, dx) if dx else move_person_y(session, dy)
+        if not moved:
+            break
+        check_item_pickup(session)
+        check_exit(session)
+        process_enemy_turns(session)
+        if person.health < hp_before or len(person.backpack.items) != items_before:
+            break
+        if entering_door and not from_room:
+            break  # прибежали по коридору в дверной проём — конец коридора
+        # Стоп у бокового проёма — только в комнате: в коридоре дверь сбоку
+        # от поворота — это его собственное продолжение, и бег должен доехать
+        # до проёма, а не встать на углу.
+        if (geometry.is_any_room_floor_cell(person.crd.x, person.crd.y, rooms)
+                and _door_beside(session, dx, dy)):
+            break  # пробегаем мимо прохода — стоп у двери

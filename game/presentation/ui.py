@@ -1,4 +1,5 @@
 import pygame
+from domain import geometry
 from domain.businessLogic import build_grid_map, compute_visibility, item_stat_label
 from domain.consts import (
     COLS,
@@ -114,25 +115,6 @@ def _cell_hash(x, y):
     return (h ^ (h >> 16)) & 0x7FFFFFFF
 
 
-def _path_cells(passages, rooms):
-    """Клетки троп: коридоры (и двери) за вычетом пола комнат.
-
-    Сетка символов затирает клетку игрока/предмета маркером, поэтому тип
-    земли под ними по ней не определить — считаем тропы из данных уровня."""
-    cells = set()
-    for px, py, pw, ph in passages:
-        for yy in range(py + 1, py + ph - 1):
-            for xx in range(px + 1, px + pw - 1):
-                cells.add((xx, yy))
-    for room in rooms:
-        if room is None:
-            continue
-        for yy in range(room.crd.y, room.crd.y + room.height):
-            for xx in range(room.crd.x, room.crd.x + room.width):
-                cells.discard((xx, yy))
-    return cells
-
-
 def _blit_tile(screen, sprites, role, x, y, cam_x, cam_y, tick=0):
     """Рисует спрайт клетки (x, y) с учётом камеры, якорь — верхний левый угол тайла."""
     screen.blit(sprites.sprite(role, tick), (x * TILE_SIZE - cam_x, y * TILE_SIZE - cam_y))
@@ -161,7 +143,9 @@ def draw_map(screen, fonts, sprites, session):
     cam_x, cam_y = _camera_offset(player)
     x0, y0, x1, y1 = _visible_cell_range(cam_x, cam_y)
     tick = _anim_tick()
-    path_cells = _path_cells(passages, rooms)
+    # Тропы считаются из данных уровня (сетка символов затирает клетку
+    # игрока/предмета маркером, тип земли под ними по ней не определить).
+    path_cells = geometry.path_cells(rooms, passages)
 
     screen.fill(BLACK, (0, 0, cfg.GRID_W, cfg.GRID_H))
 

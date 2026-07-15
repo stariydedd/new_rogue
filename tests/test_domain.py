@@ -153,8 +153,9 @@ def test_opponent_faces_player_when_attacking():
 
 
 def test_exit_not_adjacent_to_room_doors():
-    # Портал не спавнится вплотную к дверям комнаты (по Чебышёву > 1),
-    # если в комнате есть хоть одна подходящая клетка.
+    # Портал не спавнится вплотную к дверям (по Чебышёву > 1), если в его
+    # комнате есть хоть одна подходящая клетка: клетки перечисляются явно,
+    # поэтому гарантия детерминированная, а не вероятностная.
     for _ in range(30):
         level = Level(1)
         exit_crd = level.exit_crd
@@ -162,12 +163,24 @@ def test_exit_not_adjacent_to_room_doors():
                     if r is not None
                     and r.crd.x <= exit_crd.x < r.crd.x + r.width
                     and r.crd.y <= exit_crd.y < r.crd.y + r.height)
-        doors = level._door_cells(room)
         valid_exists = any(
-            all(max(abs(x - dx), abs(y - dy)) > 1 for dx, dy in doors)
-            for y in range(room.crd.y, room.crd.y + room.height - 1)
-            for x in range(room.crd.x, room.crd.x + room.width - 1)
+            all(max(abs(x - dx), abs(y - dy)) > 1 for dx, dy in level.doors)
+            for y in range(room.crd.y, room.crd.y + room.height)
+            for x in range(room.crd.x, room.crd.x + room.width)
         )
         if valid_exists:
             assert all(max(abs(exit_crd.x - dx), abs(exit_crd.y - dy)) > 1
-                       for dx, dy in doors), f"выход у двери: {exit_crd.x},{exit_crd.y}"
+                       for dx, dy in level.doors), f"выход у двери: {exit_crd.x},{exit_crd.y}"
+
+
+def test_exit_cell_free_of_enemies_and_items():
+    # На клетке портала никто не спавнится: ни враг (выбор выхода фильтрует
+    # занятые клетки), ни предмет (раскладка обходит клетку выхода).
+    for _ in range(20):
+        session = Session()
+        e = session.get_exit()
+        assert all(not (op.crd.x == e.x and op.crd.y == e.y)
+                   for op in session.get_opponents())
+        assert all(not (item.crd.x == e.x and item.crd.y == e.y)
+                   for room in session.get_rooms() if room is not None
+                   for item in room.items)

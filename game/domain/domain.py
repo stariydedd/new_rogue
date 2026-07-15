@@ -1,6 +1,7 @@
 import random
 from enum import Enum
 
+from domain import geometry
 from domain.consts import *
 
 
@@ -80,8 +81,11 @@ class Room:
         self.height = height
         self.enemies = []
 
-    def get_subjects(self, player, count):
-        """Генерирует и добавляет в комнату `count` случайных предметов на свободных клетках."""
+    def get_subjects(self, player, count, forbidden=()):
+        """Генерирует и добавляет в комнату `count` случайных предметов.
+
+        Клетки не повторяются и не попадают в `forbidden` (например, портал —
+        предмет под ним был бы не виден и подобран без сообщения)."""
         c = []
         for _ in range(count):
             item = Subject()
@@ -89,7 +93,7 @@ class Room:
             while True:
                 crd = self.generate_coords()
                 new_pair = (crd.x, crd.y)
-                if new_pair in c:
+                if new_pair in c or new_pair in forbidden:
                     continue
                 c.append(new_pair)
                 break
@@ -116,6 +120,9 @@ class Level:
         self.passages = []
         self.start_room_idx = None
         self._generate_valid_level()
+        # Двери уровня считаются один раз: их использует размещение выхода,
+        # логика бега и тесты — единое определение из domain.geometry.
+        self.doors = geometry.door_cells(self.rooms, self.passages)
         self._pick_start_room()
         self._generate_opponents(self.start_room_idx)
         self.exit_crd = self._get_exit_position()
@@ -315,42 +322,35 @@ class Level:
                 opponents.extend(room.enemies)
         return opponents
 
-    def _door_cells(self, room):
-        """Клетки дверей комнаты: центральные линии коридоров на её стенах."""
-        cells = set()
-        rx, ry, rw, rh = room.crd.x, room.crd.y, room.width, room.height
-        for px, py, pw, ph in self.passages:
-            for y in range(py + 1, py + ph - 1):
-                for x in range(px + 1, px + pw - 1):
-                    on_v = (x == rx - 1 or x == rx + rw) and ry <= y < ry + rh
-                    on_h = (y == ry - 1 or y == ry + rh) and rx <= x < rx + rw
-                    if on_v or on_h:
-                        cells.add((x, y))
-        return cells
-
     def _get_exit_position(self):
         """Выбирает случайную комнату (не стартовую, если возможно) и клетку выхода в ней.
 
         Выход не ставится вплотную к дверям (по Чебышёву > 1): портал у самого
-        входа проваливал бы игрока на следующий уровень, едва он вошёл."""
+        входа проваливал бы игрока на следующий уровень, едва он вошёл. Клетки
+        пола перечисляются явно, поэтому подходящая находится всегда, когда
+        она существует (в отличие от случайных проб)."""
         candidates = [(i, r) for i, r in enumerate(self.rooms) if r is not None and i != self.start_room_idx]
         if not candidates:
             candidates = [(i, r) for i, r in enumerate(self.rooms) if r is not None]
         _, room = random.choice(candidates)
-        doors = self._door_cells(room)
-        for _ in range(32):
-            crd = room.generate_coords()
-            if all(max(abs(crd.x - dx), abs(crd.y - dy)) > 1 for dx, dy in doors):
-                return crd
-        return room.generate_coords()  # вырожденная комната — как раньше
+        occupied = {(op.crd.x, op.crd.y) for op in room.enemies if op.is_alive()}
+        floor = [(x, y)
+                 for y in range(room.crd.y, room.crd.y + room.height)
+                 for x in range(room.crd.x, room.crd.x + room.width)
+                 if (x, y) not in occupied]
+        valid = [(x, y) for x, y in floor
+                 if all(max(abs(x - dx), abs(y - dy)) > 1 for dx, dy in self.doors)]
+        x, y = random.choice(valid if valid else floor)
+        return Coord(x, y)
 
     def generate_items_in_rooms(self, player):
         """Наполняет все комнаты уровня, кроме стартовой, случайными предметами."""
         rooms = [r for i, r in enumerate(self.rooms) if r is not None and i != self.start_room_idx]
         max_items = max(1, MAX_CONSUMABLES_PER_ROOM - self.level // LEVEL_UPDATE_DIFFICULTY)
+        exit_cell = {(self.exit_crd.x, self.exit_crd.y)}
         for room in rooms:
             count = random.randint(0, max_items)
-            room.get_subjects(player, count)
+            room.get_subjects(player, count, forbidden=exit_cell)
 
 
 class Person:

@@ -126,11 +126,18 @@ def test_run_moves_until_wall(playing_game):
     playing_game.handle_event(key(pygame.K_d))
     assert not playing_game.pending_run
     assert person.crd.x > start_x  # пробежал больше одной клетки от старта
-    # упёрся: правее стена, портал или дверь, либо проём сбоку
+    # упёрся: правее стена, портал или дверь, либо проём сбоку (только в комнате,
+    # как в правиле бега)
+    from domain import geometry
+    from domain.businessLogic import _door_beside
+
     nx, ny = person.crd.x + 1, person.crd.y
     exit_ahead = session.get_exit().x == nx and session.get_exit().y == ny
+    beside_in_room = (_door_beside(session, 1, 0)
+                      and geometry.is_any_room_floor_cell(person.crd.x, person.crd.y,
+                                                          session.get_rooms()))
     assert (exit_ahead or not can_move_to(nx, ny, session)
-            or playing_game._is_door_cell(nx, ny) or playing_game._door_beside(1, 0))
+            or (nx, ny) in session.level.doors or beside_in_room)
 
 
 def test_corridor_turn_follows_single_continuation(playing_game):
@@ -142,24 +149,25 @@ def test_corridor_turn_follows_single_continuation(playing_game):
         if room is not None:
             room.enemies.clear()
     person = session.get_player()
-    g = playing_game
     # ищем клетку тропы и направление входа, при котором прямо нельзя,
     # а продолжение ровно одно
-    from domain.businessLogic import build_grid_map, can_move_to
-    grid = build_grid_map(session.get_rooms(), session.get_passages(), person, session.get_exit())
+    from domain import geometry
+    from domain.businessLogic import _corridor_turn, build_grid_map, can_move_to
+    rooms, passages = session.get_rooms(), session.get_passages()
+    grid = build_grid_map(rooms, passages, person, session.get_exit())
     for y in range(len(grid)):
         for x in range(len(grid[0])):
-            if not g._is_corridor_cell(x, y):
+            if not geometry.is_corridor_cell(x, y, rooms, passages):
                 continue
             for dx, dy in ((0, -1), (0, 1), (-1, 0), (1, 0)):
                 person.crd.x, person.crd.y = x, y
                 if can_move_to(x + dx, y + dy, session):
                     continue  # прямо можно — поворот не нужен
-                turn = g._corridor_turn(dx, dy)
+                turn = _corridor_turn(session, dx, dy)
                 if turn is not None:
                     assert turn != (-dx, -dy)  # не разворот
                     tx, ty = x + turn[0], y + turn[1]
-                    assert g._is_corridor_cell(tx, ty)
+                    assert geometry.is_corridor_cell(tx, ty, rooms, passages)
                     return
     _pytest.skip("на этой карте не нашлось подходящего поворота")
 
@@ -188,7 +196,8 @@ def test_run_from_corridor_ends_in_doorway(playing_game):
         for x in range(2, len(grid[0])):
             if (grid[y][x] == SYM_DOOR
                     and grid[y][x - 1] == SYM_CORRIDOR and grid[y][x - 2] == SYM_CORRIDOR):
-                if playing_game._is_door_cell(x - 1, y - 1) or playing_game._is_door_cell(x - 1, y + 1):
+                doors = playing_game.session.level.doors
+                if (x - 1, y - 1) in doors or (x - 1, y + 1) in doors:
                     continue  # боковой проём остановит бег раньше — не наш случай
                 person.crd.x, person.crd.y = x - 2, y
                 playing_game.handle_event(key(pygame.K_f))
@@ -209,7 +218,8 @@ def test_run_in_room_stops_before_door(playing_game):
         for x in range(len(grid[0]) - 2):
             if (grid[y][x] == SYM_DOOR
                     and grid[y][x + 1] == SYM_ROOM_FLOOR and grid[y][x + 2] == SYM_ROOM_FLOOR):
-                if playing_game._is_door_cell(x + 1, y - 1) or playing_game._is_door_cell(x + 1, y + 1):
+                doors = playing_game.session.level.doors
+                if (x + 1, y - 1) in doors or (x + 1, y + 1) in doors:
                     continue  # боковой проём остановит бег раньше — не наш случай
                 person.crd.x, person.crd.y = x + 2, y
                 playing_game.handle_event(key(pygame.K_f))
@@ -239,6 +249,30 @@ def test_run_next_to_door_passes_through_corridor(playing_game):
     _pytest.skip("на этой карте нет двери с комнатой справа и коридором слева")
 
 
+def test_run_from_doorway_crosses_room(playing_game):
+    # Из дверного проёма F внутрь комнаты пересекает пол (минимум две клетки),
+    # а не спотыкается о первую — обычное действие после каждого коридорного бега.
+    import pytest as _pytest
+    from domain.consts import SYM_DOOR, SYM_ROOM_FLOOR
+
+    grid = _clean_map_grid(playing_game)
+    person = playing_game.session.get_player()
+    doors = playing_game.session.level.doors
+    for y in range(len(grid)):
+        for x in range(len(grid[0]) - 3):
+            if (grid[y][x] == SYM_DOOR
+                    and grid[y][x + 1] == SYM_ROOM_FLOOR
+                    and grid[y][x + 2] == SYM_ROOM_FLOOR
+                    and grid[y][x + 3] == SYM_ROOM_FLOOR
+                    and not any((x + i, y + s) in doors for i in (1, 2) for s in (-1, 1))):
+                person.crd.x, person.crd.y = x, y
+                playing_game.handle_event(key(pygame.K_f))
+                playing_game.handle_event(key(pygame.K_d))
+                assert person.crd.x >= x + 2  # пол пройден, не застряли на входе
+                return
+    _pytest.skip("на этой карте нет двери с тремя клетками пола справа")
+
+
 def test_run_past_side_door_stops_next_to_it(playing_game):
     # Пробегая вдоль стены мимо проёма, бег встаёт на клетке рядом с дверью.
     import pytest as _pytest
@@ -254,8 +288,8 @@ def test_run_past_side_door_stops_next_to_it(playing_game):
                     and grid[y - 1][x] == SYM_ROOM_FLOOR
                     and grid[y - 1][x - 1] == SYM_ROOM_FLOOR
                     and grid[y - 1][x - 2] == SYM_ROOM_FLOOR
-                    and not playing_game._is_door_cell(x - 1, y - 2)
-                    and not playing_game._is_door_cell(x, y - 2)):
+                    and (x - 1, y - 2) not in playing_game.session.level.doors
+                    and (x, y - 2) not in playing_game.session.level.doors):
                 person.crd.x, person.crd.y = x - 2, y - 1
                 playing_game.handle_event(key(pygame.K_f))
                 playing_game.handle_event(key(pygame.K_d))
@@ -311,6 +345,40 @@ def test_run_into_corridor_wall_does_nothing(playing_game):
                 return
     _pytest.skip("на этой карте нет горизонтального коридора с глухим верхом")
 
+
+def test_run_while_sleeping_consumes_turn(playing_game):
+    # F+направление во сне тратит ход, как обычный шаг: сон тикает, а не виснет.
+    person = playing_game.session.get_player()
+    person.special_state = {"sleeping": True, "turns": 3}
+    playing_game.handle_event(key(pygame.K_f))
+    playing_game.handle_event(key(pygame.K_d))
+    assert playing_game.session.message == "You are asleep!"
+    assert person.special_state.get("turns", 0) < 3
+
+def test_run_into_adjacent_enemy_reports(playing_game):
+    # Бег в упор к врагу не начинается, но и не выглядит мёртвым нажатием.
+    from domain.domain import Coord, Opponent, OpponentType
+
+    session = playing_game.session
+    person = session.get_player()
+    player_room = next(
+        r for r in session.get_rooms()
+        if r is not None
+        and r.crd.x <= person.crd.x < r.crd.x + r.width
+        and r.crd.y <= person.crd.y < r.crd.y + r.height
+    )
+    person.crd.x = player_room.crd.x  # у левого края: справа точно пол
+    for room in session.get_rooms():
+        if room is not None:
+            room.enemies.clear()
+    op = Opponent(opponent_type=OpponentType.ZOMBIE, health=100, agility=0, strength=0)
+    op.crd = Coord(person.crd.x + 1, person.crd.y)
+    player_room.enemies.append(op)
+    start = (person.crd.x, person.crd.y)
+    playing_game.handle_event(key(pygame.K_f))
+    playing_game.handle_event(key(pygame.K_d))
+    assert (person.crd.x, person.crd.y) == start
+    assert session.message == "An enemy is in the way."
 
 def test_run_cancelled_by_non_direction_key(playing_game):
     person = playing_game.session.get_player()
