@@ -264,6 +264,30 @@ def test_run_past_side_door_stops_next_to_it(playing_game):
     _pytest.skip("на этой карте нет двери в нижней стене с пробегом вдоль неё")
 
 
+def test_run_corridor_corner_turns_into_doorway(playing_game):
+    # Угол коридора с дверью сразу за поворотом: бег поворачивает и
+    # заканчивается в проёме, а не останавливается на углу (регрессия).
+    import pytest as _pytest
+    from domain.businessLogic import can_move_to
+    from domain.consts import SYM_CORRIDOR, SYM_DOOR
+
+    grid = _clean_map_grid(playing_game)
+    session = playing_game.session
+    person = session.get_player()
+    for y in range(len(grid) - 1):
+        for x in range(1, len(grid[0]) - 1):
+            if (grid[y][x] == SYM_CORRIDOR and grid[y][x - 1] == SYM_CORRIDOR
+                    and grid[y + 1][x] == SYM_DOOR
+                    and not can_move_to(x + 1, y, session)
+                    and not can_move_to(x, y - 1, session)):  # поворот единственный
+                person.crd.x, person.crd.y = x - 1, y
+                playing_game.handle_event(key(pygame.K_f))
+                playing_game.handle_event(key(pygame.K_d))
+                assert (person.crd.x, person.crd.y) == (x, y + 1)
+                return
+    _pytest.skip("на этой карте нет угла коридора с дверью под поворотом")
+
+
 def test_run_into_corridor_wall_does_nothing(playing_game):
     # Из коридора бег в непроходимую сторону — «невозможный ход», ноль движения.
     import pytest as _pytest

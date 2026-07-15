@@ -150,3 +150,24 @@ def test_opponent_faces_player_when_attacking():
     room.enemies.append(op)
     process_enemy_turns(session)
     assert op.facing == 1  # повернулся к игроку (тот справа)
+
+
+def test_exit_not_adjacent_to_room_doors():
+    # Портал не спавнится вплотную к дверям комнаты (по Чебышёву > 1),
+    # если в комнате есть хоть одна подходящая клетка.
+    for _ in range(30):
+        level = Level(1)
+        exit_crd = level.exit_crd
+        room = next(r for r in level.rooms
+                    if r is not None
+                    and r.crd.x <= exit_crd.x < r.crd.x + r.width
+                    and r.crd.y <= exit_crd.y < r.crd.y + r.height)
+        doors = level._door_cells(room)
+        valid_exists = any(
+            all(max(abs(x - dx), abs(y - dy)) > 1 for dx, dy in doors)
+            for y in range(room.crd.y, room.crd.y + room.height - 1)
+            for x in range(room.crd.x, room.crd.x + room.width - 1)
+        )
+        if valid_exists:
+            assert all(max(abs(exit_crd.x - dx), abs(exit_crd.y - dy)) > 1
+                       for dx, dy in doors), f"выход у двери: {exit_crd.x},{exit_crd.y}"

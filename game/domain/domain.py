@@ -315,13 +315,34 @@ class Level:
                 opponents.extend(room.enemies)
         return opponents
 
+    def _door_cells(self, room):
+        """Клетки дверей комнаты: центральные линии коридоров на её стенах."""
+        cells = set()
+        rx, ry, rw, rh = room.crd.x, room.crd.y, room.width, room.height
+        for px, py, pw, ph in self.passages:
+            for y in range(py + 1, py + ph - 1):
+                for x in range(px + 1, px + pw - 1):
+                    on_v = (x == rx - 1 or x == rx + rw) and ry <= y < ry + rh
+                    on_h = (y == ry - 1 or y == ry + rh) and rx <= x < rx + rw
+                    if on_v or on_h:
+                        cells.add((x, y))
+        return cells
+
     def _get_exit_position(self):
-        """Выбирает случайную комнату (не стартовую, если возможно) и возвращает координаты выхода в ней."""
+        """Выбирает случайную комнату (не стартовую, если возможно) и клетку выхода в ней.
+
+        Выход не ставится вплотную к дверям (по Чебышёву > 1): портал у самого
+        входа проваливал бы игрока на следующий уровень, едва он вошёл."""
         candidates = [(i, r) for i, r in enumerate(self.rooms) if r is not None and i != self.start_room_idx]
         if not candidates:
             candidates = [(i, r) for i, r in enumerate(self.rooms) if r is not None]
         _, room = random.choice(candidates)
-        return room.generate_coords()
+        doors = self._door_cells(room)
+        for _ in range(32):
+            crd = room.generate_coords()
+            if all(max(abs(crd.x - dx), abs(crd.y - dy)) > 1 for dx, dy in doors):
+                return crd
+        return room.generate_coords()  # вырожденная комната — как раньше
 
     def generate_items_in_rooms(self, player):
         """Наполняет все комнаты уровня, кроме стартовой, случайными предметами."""

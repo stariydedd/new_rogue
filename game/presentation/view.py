@@ -279,7 +279,10 @@ class Game:
                 break
             if entering_door and not from_room:
                 break  # прибежали по коридору в дверной проём — конец коридора
-            if self._door_beside(dx, dy):
+            # Стоп у бокового проёма — только в комнате: в коридоре дверь
+            # сбоку от поворота — это его собственное продолжение, и бег
+            # должен доехать до проёма, а не встать на углу.
+            if self._door_beside(dx, dy) and self._is_room_cell(person.crd.x, person.crd.y):
                 break  # пробегаем мимо прохода — стоп у двери
 
     def _door_beside(self, dx, dy):
