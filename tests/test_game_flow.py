@@ -126,10 +126,11 @@ def test_run_moves_until_wall(playing_game):
     playing_game.handle_event(key(pygame.K_d))
     assert not playing_game.pending_run
     assert person.crd.x > start_x  # пробежал больше одной клетки от старта
-    # упёрся: правее либо стена, либо лестница
+    # упёрся: правее стена, портал или дверь, либо проём сбоку
     nx, ny = person.crd.x + 1, person.crd.y
     exit_ahead = session.get_exit().x == nx and session.get_exit().y == ny
-    assert exit_ahead or not can_move_to(nx, ny, session)
+    assert (exit_ahead or not can_move_to(nx, ny, session)
+            or playing_game._is_door_cell(nx, ny) or playing_game._door_beside(1, 0))
 
 
 def test_corridor_turn_follows_single_continuation(playing_game):
@@ -163,29 +164,128 @@ def test_corridor_turn_follows_single_continuation(playing_game):
     _pytest.skip("на этой карте не нашлось подходящего поворота")
 
 
-def test_run_stops_at_room_entrance(playing_game):
-    # Бег по коридору завершается на первой клетке комнаты, а не насквозь.
-    import pytest as _pytest
+def _clean_map_grid(playing_game):
+    """Готовит детерминированную карту: без врагов и предметов; возвращает сетку."""
     from domain.businessLogic import build_grid_map
-    from domain.consts import SYM_CORRIDOR, SYM_DOOR, SYM_ROOM_FLOOR
 
     session = playing_game.session
     for room in session.get_rooms():
         if room is not None:
             room.enemies.clear()
             room.items.clear()
-    person = session.get_player()
-    grid = build_grid_map(session.get_rooms(), session.get_passages(), person, session.get_exit())
+    return build_grid_map(session.get_rooms(), session.get_passages(),
+                          session.get_player(), session.get_exit())
+
+
+def test_run_from_corridor_ends_in_doorway(playing_game):
+    # Бег по коридору заканчивается в дверном проёме — дверь и есть конец коридора.
+    import pytest as _pytest
+    from domain.consts import SYM_CORRIDOR, SYM_DOOR
+
+    grid = _clean_map_grid(playing_game)
+    person = playing_game.session.get_player()
+    for y in range(len(grid)):
+        for x in range(2, len(grid[0])):
+            if (grid[y][x] == SYM_DOOR
+                    and grid[y][x - 1] == SYM_CORRIDOR and grid[y][x - 2] == SYM_CORRIDOR):
+                if playing_game._is_door_cell(x - 1, y - 1) or playing_game._is_door_cell(x - 1, y + 1):
+                    continue  # боковой проём остановит бег раньше — не наш случай
+                person.crd.x, person.crd.y = x - 2, y
+                playing_game.handle_event(key(pygame.K_f))
+                playing_game.handle_event(key(pygame.K_d))
+                assert (person.crd.x, person.crd.y) == (x, y)
+                return
+    _pytest.skip("на этой карте нет прямого захода в дверь слева")
+
+
+def test_run_in_room_stops_before_door(playing_game):
+    # Бег внутри комнаты в сторону двери встаёт на клетке перед ней.
+    import pytest as _pytest
+    from domain.consts import SYM_DOOR, SYM_ROOM_FLOOR
+
+    grid = _clean_map_grid(playing_game)
+    person = playing_game.session.get_player()
+    for y in range(len(grid)):
+        for x in range(len(grid[0]) - 2):
+            if (grid[y][x] == SYM_DOOR
+                    and grid[y][x + 1] == SYM_ROOM_FLOOR and grid[y][x + 2] == SYM_ROOM_FLOOR):
+                if playing_game._is_door_cell(x + 1, y - 1) or playing_game._is_door_cell(x + 1, y + 1):
+                    continue  # боковой проём остановит бег раньше — не наш случай
+                person.crd.x, person.crd.y = x + 2, y
+                playing_game.handle_event(key(pygame.K_f))
+                playing_game.handle_event(key(pygame.K_a))
+                assert (person.crd.x, person.crd.y) == (x + 1, y)
+                return
+    _pytest.skip("на этой карте нет двери на левой стене комнаты")
+
+
+def test_run_next_to_door_passes_through_corridor(playing_game):
+    # Стоя в комнате вплотную к двери, F в её сторону проносит через дверь
+    # и дальше по коридору (а не останавливается перед дверью).
+    import pytest as _pytest
+    from domain.consts import SYM_CORRIDOR, SYM_DOOR, SYM_ROOM_FLOOR
+
+    grid = _clean_map_grid(playing_game)
+    person = playing_game.session.get_player()
     for y in range(len(grid)):
         for x in range(2, len(grid[0]) - 1):
             if (grid[y][x] == SYM_DOOR and grid[y][x + 1] == SYM_ROOM_FLOOR
                     and grid[y][x - 1] == SYM_CORRIDOR and grid[y][x - 2] == SYM_CORRIDOR):
-                person.crd.x, person.crd.y = x - 2, y
+                person.crd.x, person.crd.y = x + 1, y
+                playing_game.handle_event(key(pygame.K_f))
+                playing_game.handle_event(key(pygame.K_a))
+                assert person.crd.x <= x - 1  # дверь пройдена, бег ушёл в коридор
+                return
+    _pytest.skip("на этой карте нет двери с комнатой справа и коридором слева")
+
+
+def test_run_past_side_door_stops_next_to_it(playing_game):
+    # Пробегая вдоль стены мимо проёма, бег встаёт на клетке рядом с дверью.
+    import pytest as _pytest
+    from domain.consts import SYM_DOOR, SYM_ROOM_FLOOR, SYM_WALL
+
+    grid = _clean_map_grid(playing_game)
+    person = playing_game.session.get_player()
+    for y in range(2, len(grid)):
+        for x in range(2, len(grid[0])):
+            # Дверь в нижней стене (x, y); бежим направо по ряду пола (y-1).
+            if (grid[y][x] == SYM_DOOR
+                    and grid[y][x - 1] == SYM_WALL and grid[y][x - 2] == SYM_WALL
+                    and grid[y - 1][x] == SYM_ROOM_FLOOR
+                    and grid[y - 1][x - 1] == SYM_ROOM_FLOOR
+                    and grid[y - 1][x - 2] == SYM_ROOM_FLOOR
+                    and not playing_game._is_door_cell(x - 1, y - 2)
+                    and not playing_game._is_door_cell(x, y - 2)):
+                person.crd.x, person.crd.y = x - 2, y - 1
                 playing_game.handle_event(key(pygame.K_f))
                 playing_game.handle_event(key(pygame.K_d))
-                assert (person.crd.x, person.crd.y) == (x + 1, y)
+                assert (person.crd.x, person.crd.y) == (x, y - 1)
                 return
-    _pytest.skip("на этой карте нет прямого захода в дверь слева")
+    _pytest.skip("на этой карте нет двери в нижней стене с пробегом вдоль неё")
+
+
+def test_run_into_corridor_wall_does_nothing(playing_game):
+    # Из коридора бег в непроходимую сторону — «невозможный ход», ноль движения.
+    import pytest as _pytest
+    from domain.businessLogic import can_move_to
+    from domain.consts import SYM_CORRIDOR
+
+    grid = _clean_map_grid(playing_game)
+    session = playing_game.session
+    person = session.get_player()
+    for y in range(1, len(grid) - 1):
+        for x in range(1, len(grid[0]) - 1):
+            if (grid[y][x] == SYM_CORRIDOR
+                    and grid[y][x - 1] == SYM_CORRIDOR and grid[y][x + 1] == SYM_CORRIDOR):
+                person.crd.x, person.crd.y = x, y
+                if can_move_to(x, y - 1, session):
+                    continue  # вверх проходимо — не наш случай
+                playing_game.handle_event(key(pygame.K_f))
+                playing_game.handle_event(key(pygame.K_w))
+                assert (person.crd.x, person.crd.y) == (x, y)
+                assert session.message == "Can't move that way."
+                return
+    _pytest.skip("на этой карте нет горизонтального коридора с глухим верхом")
 
 
 def test_run_cancelled_by_non_direction_key(playing_game):

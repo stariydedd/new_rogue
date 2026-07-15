@@ -233,15 +233,19 @@ class Game:
     def _run_direction(self, dx, dy):
         """Бег (find из оригинального Rogue): серия ходов в направлении до упора.
 
-        Каждый шаг — полноценный ход (враги ходят). В коридоре бег следует
-        поворотам: если прямо нельзя, но есть ровно одно продолжение (не назад),
-        направление меняется. Остановка: стена в комнате, развилка коридора,
-        враг на пути, лестница впереди (на бегу не спускаемся), полученный
-        урон, подобранный предмет, сон или конец игры."""
+        Каждый шаг — полноценный ход (враги ходят). Бег по комнате
+        останавливается на клетке перед дверью впереди и у двери, мимо
+        которой пробегает (проём сбоку); но если игрок уже стоит вплотную
+        к двери, F в её сторону проносит через дверь и дальше по коридору.
+        Коридорный бег следует поворотам и заканчивается в дверном проёме
+        на том конце (дверь — конец коридора). Также стоп: стена или
+        развилка, враг, портал впереди (на бегу не спускаемся), полученный
+        урон, подобранный предмет, сон или конец игры. Если первый же шаг
+        невозможен — «Can't move that way.» без движения."""
         session = self.session
         person = session.get_player()
         opponents = session.get_opponents()
-        for _ in range(RUN_LIMIT):
+        for step in range(RUN_LIMIT):
             if self.state != "PLAYING" or person.special_state.get("sleeping"):
                 break
             nx, ny = person.crd.x + dx, person.crd.y + dy
@@ -251,24 +255,62 @@ class Game:
             if level_exit.x == nx and level_exit.y == ny:
                 session.set_message("You stop at the portal.")
                 break
+            entering_door = self._is_door_cell(nx, ny)
+            from_room = self._is_room_cell(person.crd.x, person.crd.y)
+            if entering_door and from_room and step:
+                break  # разбежались по комнате — стоп перед дверью, не в ней
             if not can_move_to(nx, ny, session):
-                turn = self._corridor_turn(dx, dy)
+                # Поворот коридора — только когда уже бежим: нажатие в сторону
+                # стены не должно начинать бег вбок.
+                turn = self._corridor_turn(dx, dy) if step else None
                 if turn:
                     dx, dy = turn
                     continue
+                if step == 0:
+                    session.set_message("Can't move that way.")
                 break
             hp_before = person.health
             items_before = len(person.backpack.items)
-            was_on_path = self._is_corridor_cell(person.crd.x, person.crd.y)
             moved = move_person_x(session, dx) if dx else move_person_y(session, dy)
             if not moved:
                 break
             self._resolve_turn(False)
             if person.health < hp_before or len(person.backpack.items) != items_before:
                 break
-            # Пришли по тропе к комнате — останавливаемся у входа (как в Rogue).
-            if was_on_path and not self._is_corridor_cell(person.crd.x, person.crd.y):
-                break
+            if entering_door and not from_room:
+                break  # прибежали по коридору в дверной проём — конец коридора
+            if self._door_beside(dx, dy):
+                break  # пробегаем мимо прохода — стоп у двери
+
+    def _door_beside(self, dx, dy):
+        """Дверь сбоку от направления движения — игрок пробегает мимо проёма."""
+        person = self.session.get_player()
+        x, y = person.crd.x, person.crd.y
+        sides = ((x, y - 1), (x, y + 1)) if dx else ((x - 1, y), (x + 1, y))
+        return any(self._is_door_cell(sx, sy) for sx, sy in sides)
+
+    def _is_room_cell(self, x, y):
+        """Клетка пола комнаты (двери и коридоры не считаются)."""
+        return any(room is not None
+                   and room.crd.x <= x < room.crd.x + room.width
+                   and room.crd.y <= y < room.crd.y + room.height
+                   for room in self.session.get_rooms())
+
+    def _is_door_cell(self, x, y):
+        """Клетка двери: центральная линия коридора, лежащая на стене комнаты."""
+        session = self.session
+        if not any(px + 1 <= x < px + pw - 1 and py + 1 <= y < py + ph - 1
+                   for px, py, pw, ph in session.get_passages()):
+            return False
+        for room in session.get_rooms():
+            if room is None:
+                continue
+            rx, ry, rw, rh = room.crd.x, room.crd.y, room.width, room.height
+            if (x == rx - 1 or x == rx + rw) and ry <= y < ry + rh:
+                return True
+            if (y == ry - 1 or y == ry + rh) and rx <= x < rx + rw:
+                return True
+        return False
 
     def _is_corridor_cell(self, x, y):
         """Клетка тропы: внутри сегмента коридора и не на полу комнаты (двери — да)."""
